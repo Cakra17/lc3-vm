@@ -1,7 +1,10 @@
 CFLAGS=-Wall -O2
+BUILD_DIR=.build
+OUTPUT=lc3
 
 build: lc3.c
-	cc $(CFLAGS) lc3.c -o lc3
+	mkdir $(BUILD_DIR)
+	cc $(CFLAGS) lc3.c -o $(BUILD_DIR)/$(OUTPUT)
 
 clean:
-	rm lc3
+	rm -rf $(BUILD_DIR)
