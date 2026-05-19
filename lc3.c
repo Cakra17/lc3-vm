@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -68,12 +69,12 @@ enum {
   MR_KBDR = 0xFE02, // keyboard data register
 };
 
-// input buffering
-struct termios original_tio;
+// Non blocking input
+struct termios original_tio, new_tio;
 
 void disable_input_buffering() {
   tcgetattr(STDIN_FILENO, &original_tio);
-  struct termios new_tio = original_tio;
+  new_tio = original_tio;
   new_tio.c_cflag &= ~ICANON & ~ECHO;
   tcsetattr(STDIN_FILENO, TCSANOW, &new_tio);
 }
@@ -91,6 +92,12 @@ uint16_t check_key() {
   timeout.tv_sec = 0;
   timeout.tv_usec = 0;
   return select(1, &readfds, NULL, NULL, &timeout) != 0;
+}
+
+void handle_interupt() {
+  restore_input_buffering();
+  printf("\n");
+  exit(-2);
 }
 
 // lc3 using big endian, but most of the modern computer is using little endian
@@ -131,13 +138,29 @@ uint16_t mem_read(uint16_t address) {
   return memory[address];
 }
 
-
 int read_file(const char *path) {
   FILE* file = fopen(path, "rb");
   if (!file) return 0;
   adjust_layout(file);
   fclose(file);
   return 1;
+}
+
+uint16_t sign_extend(uint16_t x, int bit_count) {
+  if ((x >> (bit_count - 1)) & 1) {
+    x |= (0xFFFF << bit_count);
+  }
+  return x;
+}
+
+void update_flags(uint16_t x) {
+  if (reg[x] == 0) {
+    reg[R_COND] = FL_ZR;
+  } else if (reg[x] >> 15) {
+     reg[R_COND] = FL_NEG;
+  } else {
+    reg[R_COND] = FL_POS;
+  }
 }
 
 int main(int argc, char* argv[]) {
@@ -153,6 +176,86 @@ int main(int argc, char* argv[]) {
     } 
   } 
 
-  // setup
+  // activate non-blocking input
+  signal(SIGINT, handle_interupt);
+  disable_input_buffering(); 
+
+  // main logic
+  // since exactly one condition flag should be set at any given time, set the Z flag
+  reg[R_COND] = FL_ZR;
+  
+  // set the PC to starting position
+  // 0x3000 is the default
+  enum { PC_START = 0x3000 };
+  reg[R_PC] = PC_START;
+
+  int running = 1;
+  while (running) {
+    uint16_t instr = mem_read(reg[R_PC]++);
+    uint16_t opcode = instr >> 12;
+    
+    switch (opcode) {
+      case OP_ADD:
+        // specification: https://www.jmeiners.com/lc3-vm/supplies/lc3-isa.pdf, page 526
+        // Destination register (DR)
+        uint16_t dr = (instr >> 9) & 0x7; 
+        // First Operand (SR1)
+        uint16_t first = (instr >> 6) & 0x7;
+        // immediate flag
+        uint16_t flag = (instr >> 5) & 0x1;
+
+        if (flag) {
+          uint16_t imm5 = sign_extend(instr & 0x1F, 5);
+          reg[dr] = reg[first] + imm5;
+        } else {
+          uint16_t second = instr & 0x7;
+          reg[dr] = reg[first] + reg[second];
+        }
+
+        update_flags(dr);
+        break;
+      case OP_AND:
+        break;
+      case OP_NOT:
+        break;
+      case OP_BR:
+        break;
+      case OP_JMP:
+        break;
+      case OP_JSR:
+        break;
+      case OP_LD:
+        break;
+      case OP_LDI:
+        // specification: https://www.jmeiners.com/lc3-vm/supplies/lc3-isa.pdf, page 532
+        // Destination register (DR)
+        dr = (instr >> 9) & 0x7; 
+        // offset
+        uint16_t pc_offset = sign_extend(instr & 0x1FF, 9);
+        reg[dr] = mem_read(mem_read(reg[R_PC] + pc_offset));
+        update_flags(dr);
+        break;
+      case OP_LDR:
+        break;
+      case OP_LEA:
+        break;
+      case OP_ST:
+        break;
+      case OP_STI:
+        break;
+      case OP_STR:
+        break;
+      case OP_TRAP:
+        break;
+      case OP_RES:
+      case OP_RTI:
+      default:
+        abort();
+        break;
+    }
+  }
+  
+  // disable non-blocking input
+  restore_input_buffering();
   return 0;
 }

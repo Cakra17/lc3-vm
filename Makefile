@@ -3,7 +3,7 @@ BUILD_DIR=.build
 OUTPUT=lc3
 
 build: lc3.c
-	mkdir $(BUILD_DIR)
+	mkdir -p $(BUILD_DIR)
 	cc $(CFLAGS) lc3.c -o $(BUILD_DIR)/$(OUTPUT)
 
 clean:
