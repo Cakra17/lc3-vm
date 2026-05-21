@@ -73,8 +73,19 @@ enum
   MR_KBDR = 0xFE02, // keyboard data register
 };
 
+enum
+{
+  TRAP_GETC = 0x20,  // get character from keyboard, not echoed onto the terminal
+  TRAP_OUT = 0x21,   // output a character
+  TRAP_PUTS = 0x22,  // output a word string
+  TRAP_IN = 0x23,    // get character from keyboard, echoed onto the terminal
+  TRAP_PUTSP = 0x24, // output a byte string
+  TRAP_HALT = 0x25   // halt the program
+};
+
 // Non blocking input
-struct termios original_tio, new_tio;
+struct termios original_tio,
+    new_tio;
 
 void disable_input_buffering()
 {
@@ -288,12 +299,9 @@ int main(int argc, char *argv[])
       break;
     case OP_BR:
       // spesification: https://www.jmeiners.com/lc3-vm/supplies/lc3-isa.pdf, page 528
-      uint16_t n = (instr >> 11) & 0x1;
-      uint16_t z = (instr >> 10) & 0x1;
-      uint16_t p = (instr >> 9) & 0x1;
-
       uint16_t pc_offset = sign_extend(instr & 0x1FF, 9);
-      if (n | z | p)
+      uint16_t condFlag = (instr >> 9) & 0x7;
+      if (condFlag & reg[R_COND])
       {
         reg[R_PC] += pc_offset;
       }
@@ -307,17 +315,17 @@ int main(int argc, char *argv[])
       // spesification: https://www.jmeiners.com/lc3-vm/supplies/lc3-isa.pdf, page 530
       reg[R_7] = reg[R_PC];
       uint16_t mode = (instr >> 11) & 0x1;
-      if (!mode)
+      if (mode)
       {
         // JSR
-        uint16_t base_r = (instr >> 6) & 0x7;
-        reg[R_PC] = reg[base_r];
+        uint16_t pc_offset = sign_extend(instr & 0x7FF, 11);
+        reg[R_PC] += pc_offset;
       }
       else
       {
         // JSRR
-        uint16_t pc_offset = sign_extend(instr & 0x7FF, 11);
-        reg[R_PC] += pc_offset;
+        uint16_t base_r = (instr >> 6) & 0x7;
+        reg[R_PC] = reg[base_r];
       }
       break;
     case OP_LD:
@@ -370,9 +378,56 @@ int main(int argc, char *argv[])
       sr = (instr >> 9) & 0x7;
       base_r = (instr >> 6) & 0x7;
       pc_offset = sign_extend(instr & 0x3F, 6);
-      mem_write(reg[base_r] + pc_offset, sr);
+      mem_write(reg[base_r] + pc_offset, reg[sr]);
       break;
     case OP_TRAP:
+      reg[R_7] = reg[R_PC];
+      switch (instr & 0xFF)
+      {
+      case TRAP_GETC:
+        reg[R_0] = (uint16_t)getchar();
+        update_flags(R_0);
+        break;
+      case TRAP_OUT:
+        uint16_t ch = reg[R_0];
+        putc((char)ch, stdout);
+        break;
+      case TRAP_PUTS:
+        uint16_t *c = memory + reg[R_0];
+        while (*c)
+        {
+          putc((char)*c, stdout);
+          ++c;
+        }
+        fflush(stdout);
+        break;
+      case TRAP_IN:
+        printf("Enter a character: ");
+        char chr = getchar();
+        putc(chr, stdout);
+        fflush(stdout);
+        reg[R_0] = (uint16_t)chr;
+        update_flags(R_0);
+        break;
+      case TRAP_PUTSP:
+        c = memory + reg[R_0];
+        while (*c)
+        {
+          char ch1 = (*c) >> 0x7;
+          putc(ch1, stdout);
+          char ch2 = (*c) >> 8;
+          if (ch2)
+            putc(ch2, stdout);
+          ++c;
+        }
+        fflush(stdout);
+        break;
+      case TRAP_HALT:
+        puts("HALT");
+        fflush(stdout);
+        running = 0;
+        break;
+      }
       break;
     case OP_RES:
     case OP_RTI:
